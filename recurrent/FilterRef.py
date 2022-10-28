@@ -61,17 +61,46 @@ def SunZenCorrect(r, sunz):
         r[i, index[0], index[1]] = r[i, index[0], index[1]] / cossza
 
 
-class FilterRef():
-	def __init__(self,sat,sensor,YYMMDD,bandNUM):
-		self.sat = sat
-		self.sensor = sensor #FY3B
-		self.year = YYMMDD[:4]
-		self.month = YYMMDD[4:6]
-		self.day = YYMMDD[6:]
-		self.bandNum = bandNUM
-		self.YYMMDD = YYMMDD
+def LandSeaFilter(data):
+	"""
+	0
+	1
+	2
+	3
+	4
+	5
+	6
+	7 深海
 
-		self.L1BasePath = '/RED1BDATA_B/SNO/AQUA_MODIS_OneMonthOneDay/MYD021KM/%s/152/' % (self.year)
+	:param LandSeaMask:
+	:return:
+	"""
+	result = np.zeros_like(data)
+	result[data==7]=1.
+	return result
+
+def SolarZFilter(data):
+	result = np.zeros_like(data)
+	index = (data<46.0)&(data>45.0)
+	result[index]=1
+	return result
+
+def chlorFilter(data):
+	result = np.zeros_like(data)
+	index = (data>0)&(data<0.07)
+	result[index]=1
+	return result
+
+
+class FilterRef():
+	def __init__(self,sat,year,day,bandNUM):
+		self.sat = sat
+		self.year =year
+		self.day = day
+		self.bandNum = bandNUM
+
+
+		self.L1BasePath = '/RED1BDATA_B/SNO/AQUA_MODIS_OneMonthOneDay/MYD021KM/%s/%s/' % (self.year,self.day)
 		# print self.L1BasePath
 		# 获取HDF文件列表
 		# for root, dirs, files in os.walk(self.L1BasePath):
@@ -79,95 +108,89 @@ class FilterRef():
 		self.HDF_list = glob.glob(self.L1BasePath+'*.hdf')
 
 		self.HDF_list.sort(key=lambda x: str(x[-34:-21]))  # 按时间顺序排列
-		# print self.HDF_list
-		# self.L1BasePath = '/RED1BDATA_A/SNR/XWW/file/MODIS/MYD021KM/2015/211/MYD021KM.A2015211.2025.061.2018051010821.hdf'
 
-	def readData(self, fileName):
+		self.HDF_RandanceL = 'R(L).hdf'
+
+
+
+	def readData(self, fileName,bandNUM):
 		LonLat_data = {}
 		SunSat_data = {}
-		try:
-			h4File = SD(fileName, SDC.READ)
-			# print h4File
-			band_1_2 = h4File.select('EV_250_Aggr1km_RefSB').get()
-			_, self.row, self.col = band_1_2.shape
-			print 'self.row:', self.row
-			band_3_7 = h4File.select("EV_500_Aggr1km_RefSB").get()  # band3 648.63nm对应modis666nm,band4 863.49nm对应modis 865nm
-			band_8_26 = h4File.select("EV_1KM_RefSB").get()  # band3 648.63nm对应modis666nm,band4 863.49nm对应modis 865nm
- 
-			band_1_2_s = h4File.select('EV_250_Aggr1km_RefSB').attributes()['reflectance_scales']
-			band_1_2_o = h4File.select('EV_250_Aggr1km_RefSB').attributes()['reflectance_offsets']
-			band_3_7_s = h4File.select("EV_500_Aggr1km_RefSB").attributes()['reflectance_scales']
-			band_3_7_0 = h4File.select("EV_500_Aggr1km_RefSB").attributes()['reflectance_offsets']
-			band_8_26_s = h4File.select("EV_1KM_RefSB").attributes()['reflectance_scales']
-			band_8_26_o = h4File.select("EV_1KM_RefSB").attributes()['reflectance_offsets']
-			# print 'band_8_26_s is: ', band_8_26_s # 2*2030*1354
-			# print band_1_2_o
-			band_1_2_ref = np.array([[[np.nan] * self.col] * self.row] * 2)
-			band_3_7_ref = np.array([[[np.nan] * self.col] * self.row] * 5)
-			band_8_26_ref = np.array([[[np.nan] * self.col] * self.row] * 15)
 
-			print band_1_2_ref.shape
+		bandNUM = int(bandNUM)
 
-			for i in range(0, 2):
-				# print 'band_1_2 shape is: ', band_1_2[i].shape
-				# band_1_2_ref[i] = (band_1_2[i] - band_1_2_o[i]) * band_1_2_s[i] * 0.01
-				band_1_2_ref[i] = (band_1_2[i] - band_1_2_o[i]) * band_1_2_s[i]
+		h4File = SD(fileName, SDC.READ)
+		# print h4File
+		band = h4File.select('EV_1KM_RefSB').get()[bandNUM-8]
+		self.row, self.col = band.shape
+		print 'self.row:', self.row
+		band_S = h4File.select("EV_1KM_RefSB").attributes()['radiance_scales'][bandNUM-8]
+		band_O = h4File.select("EV_1KM_RefSB").attributes()['radiance_offsets'][bandNUM-8]
+		band_data = (band-band_O)*band_S
+		# 不知道 为啥为啥0.1 cm m 0.01？ Ltypical
+		Rltypical = band_data*0.1
+		# 这个方法应该还不对，后续找孙老师确认看看
+		# bb = band_data*(1906.19)*0.01
 
-			for i in range(0, 5):
-				# band_3_7_ref[i] = (band_3_7[i] - band_3_7_0[i]) * band_3_7_s[i] * 0.01
-				band_3_7_ref[i] = (band_3_7[i] - band_3_7_0[i]) * band_3_7_s[i]
+		# match GEO file
+		print ' match geo file: ',fileName.replace('MYD021KM','MYD03')[:-18]
+		geo_filename_indedx = fileName.replace('MYD021KM','MYD03')[:-18]
+		geo_filename = glob.glob(geo_filename_indedx+'*')[0]
+		print geo_filename
+		geo_file = SD(geo_filename, SDC.READ)
+		# read data
+		Latitude = geo_file.select('Latitude').get()
+		Longitude = geo_file.select('Longitude').get()
 
-			for i in range(0, 15):
-				# band_8_26_ref[i] = (band_8_26[i] - band_8_26_o[i]) * band_8_26_s[i] * 0.01
-				band_8_26_ref[i] = (band_8_26[i] - band_8_26_o[i]) * band_8_26_s[i]
+		SensorZenith = geo_file.select('SensorZenith').get()
+		SensorZenith_S = geo_file.select("SensorZenith").attributes()['scale_factor']
+		SensorZ = SensorZenith * SensorZenith_S
+		SensorAzimuth = geo_file.select('SensorAzimuth').get()
+		SensorAzimuth_S = geo_file.select("SensorAzimuth").attributes()['scale_factor']
+		SensorA = SensorAzimuth * SensorAzimuth_S
+		SolarZenith = geo_file.select('SolarZenith').get()
+		SolarZenith_S = geo_file.select("SolarZenith").attributes()['scale_factor']
+		SolarZ = SolarZenith * SolarZenith_S
+		SolarAzimuth = geo_file.select('SolarAzimuth').get()
+		SolarAzimuth_S = geo_file.select("SolarAzimuth").attributes()['scale_factor']
+		SolarA = SolarAzimuth* SolarAzimuth_S
+		LandSeaMask = geo_file.select('Land/SeaMask').get()
 
-			# sys.exit(-1)
-			# LonLat_data['Lon'] = h5File.get('/Longitude')[:]
-			# LonLat_data['Lat'] = h5File.get('/Latitude')[:]
-			# SunSat_data['SolarA'] = h5File.get('/SolarAzimuth')[:]
-			# SunSat_data['SolarZ'] = h5File.get('/SolarZenith')[:]
-			# SunSat_data['SensorA'] = h5File.get('/SensorAzimuth')[:]
-			# SunSat_data['SensorZ'] = h5File.get('/SensorZenith')[:]
-		except Exception as e:
-			print str(e)
-			print "Modis L1 data open error."
-			return -1
+		# match
+		chlor_path = '/RED1BDATA_A/SNR/XWW/code/Recurrent/data/2019/121/'
 
+		partname = os.path.basename(geo_filename)
+		# print partname[7:11] #2019
+		# print partname[11:14] #121
+		# print partname[15:19] #0000
 
-		# GEO
-		try:
-			# find geo file
-			repalce_result = fileName.replace('MYD021KM', 'MYD03')[0:71]
-			Geo_file = glob.glob(repalce_result+'*')
-			print 'L1 file:', fileName
-			# print 'GEO File :', Geo_file
-			h4FileGeo = SD(Geo_file[0], SDC.READ)
-			lon = h4FileGeo.select('Longitude').get()
-			lat = h4FileGeo.select('Latitude').get()
-			# 角度信息 需要加scale factor
-			satz = h4FileGeo.select('SensorZenith').get()
-			satz_s = h4FileGeo.select('SensorZenith').attributes()['scale_factor']
-			sata = h4FileGeo.select('SensorAzimuth').get()
-			sata_s = h4FileGeo.select('SensorAzimuth').attributes()['scale_factor']
-			sunz = h4FileGeo.select('SolarZenith').get()
-			sunz_s = h4FileGeo.select('SolarZenith').attributes()['scale_factor']
-			suna = h4FileGeo.select('SolarAzimuth').get()
-			suna_s = h4FileGeo.select('SolarAzimuth').attributes()['scale_factor']
+		# 匹配叶绿素a的数据，读取数据集
+		# 如果匹配失败，停止执行后续操作。
+		chlor_name = glob.glob(chlor_path + 'AQUA_MODIS.'+partname[7:11]+'*T'+partname[15:19]+'*.L2.OC.nc')
 
-			LonLat_data['Lon'] = lon
-			LonLat_data['Lat'] = lat
-			SunSat_data['SolarA'] = suna * suna_s
-			SunSat_data['SolarZ'] = sunz * sunz_s
-			SunSat_data['SensorA'] = sata * sata_s
-			SunSat_data['SensorZ'] = satz * satz_s
+		if chlor_name:
+			chlor_file = chlor_name[0]
+			chlor_data = h5py.File(chlor_file,'r')
+			# 注意叶绿素 当中的填充-32767 为无效的数据值，需要过滤掉
+			chlor_a = chlor_data['geophysical_data/chlor_a'][()]
+			readsave = h5py.File('/RED1BDATA_A/SNR/XWW/code/Recurrent/data/ReadSave/'+partname[7:11]+'_'+partname[11:14]+'_'+partname[15:19]+'.hdf','w')
+			readsave['Latitude'] = Latitude
+			readsave['Longitude'] = Longitude
+			readsave['band_data'] = band_data
+			readsave['Rltypical'] = Rltypical
+			readsave['SensorZ'] = SensorZ
+			readsave['SensorA'] = SensorA
+			readsave['SolarZ'] = SolarZ
+			readsave['SolarA'] = SolarA
+			readsave['LandSeaMask'] = LandSeaMask
+			readsave['chlor_a'] = chlor_a
 
-		except Exception as e:
-			print str(e)
-			print "Modis GEO data open error."
-			return -1
+			return [band_data, Rltypical, Latitude, Longitude, SensorZ, SensorA, SolarZ, SolarA, LandSeaMask, chlor_a]
+		else:
+			print 'no chlor-a file!'
+			pass
+			return None
 
-
-		return band_8_26_ref, band_3_7_ref, band_1_2_ref, LonLat_data, SunSat_data
 
 
 	def CalRef(self, bandData, L1File, band13, band16, SolZ):  ###Band3(648.63nm)反射率阈值0.1过滤
@@ -260,81 +283,64 @@ class FilterRef():
 
 	def filterData(self,):
 		print self.HDF_list
-		# self.HDF_list = ['/RED1BDATA_A/SNR/XWW/file/MODIS/MYD021KM/2015/211/MYD021KM.A2015211.2025.061.2018051010821.hdf ']
+
+		 
 		for L1File in self.HDF_list:
-			band_8_26, band_3_7, band_1_2, LonLat_data, SunSat_data = self.readData(L1File)
-			# band_6_20, band_1_4, LonLat_data, SunSat_data = self.readData(L1File)
-			print 'band_1_2.shape:', band_1_2.shape
-			print 'band_3_7.shape:', band_3_7.shape
-			print 'band_8_26.shape:', band_8_26.shape
-			# buid band 1-26
-			band_1_26 = np.concatenate((band_1_2, band_3_7, band_8_26))
-			print 'create 8-26 band date ', band_1_26.shape
+			# 读取MODIS的EV_1KM_RefSB 9 通道
+			# 天顶角 海陆掩码
 
-			# band_13 = band_1_26[12] #类似band3作用
-			band_13 = band_1_26[0] #类似band3作用
-			print'band13=65535', (band_13!=65535).any()
-			band_16 = band_1_26[13] #类似band4作
+			L1File = '/RED1BDATA_B/SNO/AQUA_MODIS_OneMonthOneDay/MYD021KM/2019/121/MYD021KM.A2019121.2145.061.2019122151635.hdf'
+			print L1File
 
-			if band_1_26.any():
-				# GEO文件获取LonLat和角度信息
-				HMS = L1File.split('.')[2] + L1File.split('.')[3] # 时次2220061
-				# 1.深海区域经纬度筛选，经纬度0-1过滤矩阵：LonLatMask
-				try:
+			result = self.readData(L1File,self.bandNum)
+			if result:
+				[band_data, Rltypical, Latitude, Longitude, SensorZ, SensorA, SolarZ, SolarA, LandSeaMask, chlor_a] = result
+
+				L1_basename = os.path.basename(L1File)
+				year = L1_basename[10:14]
+				day =  L1_basename[14:17]
+				tt = L1_basename[18:22]
+				print year,day,tt
+
+				if Rltypical.any():
+					LonLat_data ={}
+					LonLat_data['Lon'] = Longitude
+					LonLat_data['Lat'] = Latitude
+
+					# 1.深海区域经纬度筛选，经纬度0-1过滤矩阵：LonLatMask
 					LonLatMask = LonLatFilter(LonLat_data, self.row, self.col).LonLatProcess()  # 0-1矩阵
-				except ValueError:
-					# MODIS的有的数据纬度不一致
-					pass
-				print 'Lon Lat fitter result:', LonLatMask.any()
-				if LonLatMask.any():
-					# 2.耀斑角筛选，耀斑角0-1过滤矩阵：SunSatMask   #35度
-					SunSatMask = GlintFilter(SunSat_data).GlintProcess()  # 0-1矩阵
-					# print "SunSat_data", SunSat_data
-					print "SUNsatMASK", SunSatMask.any()
+					if LonLatMask.any()==1:
+						fittersave = h5py.File('/RED1BDATA_A/SNR/XWW/code/Recurrent/data/FilterSave/{}_{}_{}_fitter.hdf'.format(year,day,tt), 'w')
+						# 经纬度过滤
+						fittersave['LonLatMask'] = LonLatMask
+						# 海陆掩码过滤
+						LandSeaMaskFilter = LandSeaFilter(LandSeaMask)
+						print (LandSeaMaskFilter).dtype
 
-					# 3.过滤经纬度、耀斑角、云，计算反射率
-					if SunSatMask.any():
-						print 'cal refFactor'
-						# 计算反射率之前 无效值都为0；
+						# 太阳天顶角过滤
+						SolarZMask = SolarZFilter(SolarZ)
 
-						RefFactor, SolZ, RefData_band3  = self.CalRef(band_1_26, L1File, band_13, band_16, SunSat_data['SolarZ'])  # RefFactor没有矫正
+						# 叶绿素a过滤
+						chlormask = chlorFilter(chlor_a)
+						print chlormask
 
 
-						RefData1 = RefFactor * LonLatMask
-						# RefData1 = RefFactor
-						RefData2 = RefData1 * SunSatMask
+						fittersave['LandSeaMask'] = LandSeaMask
+						fittersave['chlormask'] = chlormask
 
-						# SolZ2 = SolZ * LonLatMask * SunSatMask
-						SolZ2 = SolZ * SunSatMask
-						print("Filter Ref Over;")
-
-						if RefData2.any():
-							print "%s_%s:refData valid!!!!!" % (self.YYMMDD, HMS)
-							validRefPath = '/RED1BDATA_A/SNR/XWW/file/MODIS/result152/%s/Band%s/' % (self.YYMMDD, str(self.bandNum))
-							if not os.path.exists(validRefPath):
-								os.makedirs(validRefPath)
-
-							# #Ref存中间文件
- 							# print 'Newslope:', newSlope
-							f = File(
-								validRefPath + '%s_%s_validRefFactor_Band%s.HDF' % (self.YYMMDD, HMS, str(self.bandNum)),
-								'w')
-							# f.create_dataset('LONLATMask', data=LonLatMask, compression='gzip')
-							f.create_dataset('GlintMask', data=SunSatMask, compression='gzip')
-							f.create_dataset('RefFactor_1', data=RefFactor, compression='gzip')
-							f.create_dataset('SolZ_1', data=SolZ, compression='gzip')
-							f.create_dataset('RefData_band3', data=RefData_band3, compression='gzip')
-							# f.create_dataset('newSlope', data=newSlope)
-
-							f.create_dataset('RefFactor_2_LONLATMask', data=RefData1, compression='gzip')
-							f.create_dataset('RefFactor_3_GlintMask', data=RefData2, compression='gzip')
-							f.create_dataset('SolZ_2', data=SolZ2, compression='gzip')
-							print "valid validRefFactor save over:", validRefPath
+						fittersave['LandSeaMaskfilter'] = LandSeaMaskFilter
+						fittersave['Rtypical_LandSeaMask'] = Rltypical*LandSeaMaskFilter
+						fittersave['Rtypical_LandSeaMask_LonLat'] = Rltypical*LandSeaMaskFilter*LonLatMask
+						fittersave['Rtypical_LandSeaMask_LonLat_Sol'] = Rltypical*LandSeaMaskFilter*LonLatMask*SolarZMask
+						fittersave['Rtypical_LandSeaMask_LonLat_Sol_chlor'] = Rltypical*LandSeaMaskFilter*LonLatMask*SolarZMask*chlormask
+						fittersave['Rtypical'] = Rltypical
+						fittersave['SolarZMask'] = SolarZMask
 
 
-						else:
-							print "%s_%s:validRefFactor invalid!!!!!" % (self.YYMMDD, HMS)
-					# else:
-					#
-					# 	print 'no Lon Lat data'
-					# 	pass
+						print 'Lon Lat fitter result:', LonLatMask
+						fittersave.close()
+			else:
+				pass
+
+			exit(0)
+

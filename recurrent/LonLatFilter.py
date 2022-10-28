@@ -10,7 +10,7 @@ class LonLatFilter(object):
 		#self.LonLat_limit = [{'LonLimit': [-32.3, -11], 'LatLimit': [-19.9, -9.9]}]
 		#所有区域
 		# self.LonLat_limit = [{'LonLimit': [-32.3, -11], 'LatLimit': [-25, 0]}]
-		self.LonLat_limit = [{'LonLimit': [-130.1, -125.1], 'LatLimit': [38.8, 45]}]
+		self.LonLat_limit = [{'LonLimit': [-150.1, -120.1], 'LatLimit': [15.1, 45.1]}]
 		# self.LonLat_limit = [{'LonLimit': [-130.2, -89], 'LatLimit': [-44.9, -20.7]},
 		# 					 {'LonLimit': [139.5, 165.6], 'LatLimit': [10, 22.7]},
 		# 					 {'LonLimit': [179.4, 180], 'LatLimit': [15, 23.5]},
@@ -24,7 +24,7 @@ class LonLatFilter(object):
 		Data[Data > maxLimit] = -999.0
 		Data[Data < minLimit] = -999.0
 		Data[Data > -999.0] = 1
-		Data[Data == -999.0] = 0
+		Data[Data == -999.++ 0] = 0
 		return Data
 
 	def LonLatProcess(self):
