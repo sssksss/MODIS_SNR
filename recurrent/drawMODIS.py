@@ -2,6 +2,7 @@
 
 from pathlib import Path
 from datetime import datetime
+import os,glob
 
 from pyhdf.SD import SD, SDC
 import numpy as np
@@ -11,6 +12,18 @@ import matplotlib.ticker as mticker
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 from cartopy.mpl.ticker import LongitudeFormatter, LatitudeFormatter
+import h5py
+
+
+def readmsk():
+    filea = h5py.File(r'D:\Work\SNR\file\American_West\MODIS\2019_121_2145_fitter.hdf','r')
+    landseamask = filea['LandSeaMaskfilter'][()]
+    lonlatmask = filea['LonLatMask'][()]
+    solzmask = filea['SolarZMask'][()]
+    chlormask = file021km['chlormask'][()]
+
+    return [landseamask,lonlatmask,solzmask,chlormask]
+
 
 def to_reflectance(sds):
     '''将反射率的SDS变为浮点型数组.'''
@@ -34,16 +47,12 @@ def scale_modis(rgb):
 
     return f(rgb)
 
-if __name__ == '__main__':
-    # 输入和输出目录.
-    dirpath_data = Path('./data')
-    dirpath_pics = Path('./pics')
-    if not dirpath_pics.exists():
-        dirpath_pics.mkdir()
 
-    # 输入文件.
-    filepath_MYD02 = r"D:\Work\SNR\file\American_West\MODIS\MYD021KM\2015\210\MYD021KM.A2015210.0330.061.2018051002131.hdf"
-    filepath_MYD03 = r"D:\Work\SNR\file\American_West\MODIS\MYD03\2015\210\MYD03.A2015210.0330.061.2018050155053.hdf"
+def draw_main(dirpath_pics,filepath_MYD02,filepath_MYD03):
+    # filepath_MYD02 = filepath_MYD02
+    # filepath_MYD03 = filepath_MYD03
+    filepath_MYD02 = r'D:\Work\SNR\file\American_West\MODIS\MYD021KM\2019\121\MYD021KM.A2019121.2145.061.2019122151635.hdf'
+    filepath_MYD03 = r"D:\Work\SNR\file\American_West\MODIS\MYD03\2019\121\MYD03.A2019121.2145.061.2019122150853.hdf"
     # 提取文件名中的时间.
     parts = filepath_MYD02.split('.')
     print parts
@@ -56,6 +65,7 @@ if __name__ == '__main__':
     sd.end()
     # 地图范围由granule的范围决定.
     extents = [lon.min(), lon.max(), lat.min(), lat.max()]
+    print extents
 
     # 读取反射率.
     sd = SD(str(filepath_MYD02), SDC.READ)
@@ -70,6 +80,10 @@ if __name__ == '__main__':
     rgb = np.dstack((ref1, ref4, ref3))
     rgb[np.any(np.isnan(rgb), axis=-1)] = 1
     rgb = np.clip(rgb, 0, 1)
+    # -------------------
+    [landseamask, lonlatmask, solzmask,chlormask] = readmsk()
+    rgb[(landseamask*lonlatmask*solzmask)==0]=1
+    # -------------------
 
     # 三种处理的图像.
     rgb1 = rgb
@@ -79,7 +93,7 @@ if __name__ == '__main__':
     # 组图形状为(1, 3).
     proj = ccrs.PlateCarree()
     subplot_kw = {'projection': proj}
-    fig, axes = plt.subplots(1, 3, figsize=(15, 5), subplot_kw=subplot_kw)
+    fig, axes = plt.subplots(1, 3, figsize=(16, 9), subplot_kw=subplot_kw)
     fig.subplots_adjust(wspace=0.2)
     # 画出地图.
     for ax in axes:
@@ -107,9 +121,34 @@ if __name__ == '__main__':
 
     # 设置图片标题.
     t = date.strftime('%Y-%m-%d %H:%M')
-    fig.suptitle(t, y=0.9, fontsize='large')
+    # fig.suptitle(t, fontsize='large')
 
     # 保存图片.
-    filepath_output = dirpath_pics / 'true_color.png'
-    fig.savefig(str(filepath_output), dpi=500, bbox_inches='tight')
+    filepath_output = r'D:\Work\SNR\code\calABCD\MODIS\MODIS_SNR\recurrent\pics\{}_true_color.png'.format(date.strftime('%Y%m%d_%H%M'))
+    print filepath_output
+    fig.savefig((filepath_output), dpi=500, bbox_inches='tight')
     plt.close(fig)
+
+
+if __name__ == '__main__':
+    # 输入和输出目录.
+    dirpath_data = Path('./data')
+    dirpath_pics = Path('./pics')
+    if not dirpath_pics.exists():
+        dirpath_pics.mkdir()
+
+    # 输入文件.
+    file021km = os.listdir(r"D:\Work\SNR\file\American_West\MODIS\MYD021KM\2019\121")
+
+    for name in file021km:
+        abs_file_path = os.path.join(r"D:\Work\SNR\file\American_West\MODIS\MYD021KM\2019\121",name)
+        print abs_file_path
+
+        geofilepath = glob.glob(abs_file_path.replace('MYD021KM','MYD03')[:-18]+'*')[0]
+        print geofilepath
+
+        draw_main(dirpath_pics,abs_file_path,geofilepath)
+
+        exit(0)
+
+
